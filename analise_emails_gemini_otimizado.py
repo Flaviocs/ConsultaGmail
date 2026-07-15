@@ -10,6 +10,7 @@ import warnings
 from dotenv import load_dotenv
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
+from google.oauth2 import service_account
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -47,17 +48,19 @@ def autenticar_gmail():
 
 
 def configurar_gemini():
-    """Configura o Gemini com API key"""
-    api_key = os.getenv('GEMINI_API_KEY')
-    if not api_key or api_key == 'sua_chave_aqui':
+    """Configura credenciais do Vertex AI via service account"""
+    credentials_file = os.getenv('GCP_CREDENTIALS_FILE')
+    if not credentials_file or not os.path.exists(credentials_file):
         raise ValueError(
-            '\n❌ GEMINI_API_KEY não configurada!\n'
-            '   1. Obtenha sua chave em: https://aistudio.google.com/app/apikey\n'
-            '   2. Edite o arquivo .env\n'
-            '   3. Cole sua chave API\n'
+            f'\n❌ Arquivo de credenciais não encontrado: {credentials_file}\n'
+            '   Baixe o JSON da service account no GCP Console e coloque na pasta do projeto.\n'
         )
 
-    return api_key
+    creds = service_account.Credentials.from_service_account_file(
+        credentials_file,
+        scopes=['https://www.googleapis.com/auth/cloud-platform']
+    )
+    return creds
 
 
 def extrair_corpo_email(payload):
@@ -75,8 +78,8 @@ def extrair_corpo_email(payload):
     return corpo[:5000]  # Aumentado para 5000 chars para resumos melhores
 
 
-def analisar_email_com_gemini(api_key, assunto, remetente, corpo):
-    """Analisa o email usando Gemini via REST API"""
+def analisar_email_com_gemini(creds, assunto, remetente, corpo):
+    """Analisa o email usando Gemini via Vertex AI (service account)"""
     prompt = f"""Analise este email e classifique em: SPAM, IRRELEVANTE ou IMPORTANTE
 
 Email:
@@ -87,7 +90,7 @@ Email:
 Critérios:
 - SPAM: propaganda não solicitada, phishing, golpes
 - IRRELEVANTE: newsletters, promoções, vagas, supermercado, bemol, mrv, mercado livre, santander
-- IMPORTANTE: emails pessoais, profissionais, financeiros, viagens, documentos, confirmações, sebrae, sebraeprev, prefeitura, nota fiscal, guararapes, boletos, multas, valentina, autismo, patricia, lello
+- IMPORTANTE: emails pessoais, profissionais, financeiros, viagens, documentos, confirmações, sebrae, sebraeprev, prefeitura, nota fiscal, guararapes, boletos, multas, valentina, autismo, patricia, lello, informações sobre inteligencia artificial ou assusntos relacionados
 
 Responda EXATAMENTE assim:
 CLASSIFICAÇÃO: [SPAM/IRRELEVANTE/IMPORTANTE]
@@ -100,12 +103,26 @@ RESUMO: [
 """
 
     try:
-        url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}'
+        # Renova o token se necessário
+        if not creds.valid:
+            creds.refresh(Request())
 
-        headers = {'Content-Type': 'application/json'}
+        project = os.getenv('GCP_PROJECT_ID')
+        location = os.getenv('GCP_LOCATION', 'us-central1')
+        model = 'gemini-2.5-flash'
+        url = (
+            f'https://{location}-aiplatform.googleapis.com/v1/projects/{project}'
+            f'/locations/{location}/publishers/google/models/{model}:generateContent'
+        )
+
+        headers = {
+            'Authorization': f'Bearer {creds.token}',
+            'Content-Type': 'application/json'
+        }
 
         payload = {
             'contents': [{
+                'role': 'user',
                 'parts': [{'text': prompt}]
             }]
         }
@@ -119,7 +136,7 @@ RESUMO: [
         elif response.status_code == 429:
             return 'QUOTA_EXCEDIDA'
         else:
-            return f'ERRO: {response.status_code} {response.text[:100]}'
+            return f'ERRO: {response.status_code} {response.text[:200]}'
 
     except Exception as e:
         if '429' in str(e):
@@ -132,22 +149,34 @@ def extrair_classificacao(resposta):
     if resposta == 'QUOTA_EXCEDIDA':
         return 'QUOTA_EXCEDIDA', '', ''
 
+    if resposta.startswith('ERRO:'):
+        print(f'\n   ⚠️  ERRO NA API: {resposta}')
+        return 'ERRO_API', '', ''
+
     linhas = resposta.split('\n')
-    classificacao = 'IRRELEVANTE'
+    classificacao = None
     titulo = ''
     resumo = ''
 
     for linha in linhas:
-        if 'CLASSIFICAÇÃO:' in linha:
-            classificacao = linha.split('CLASSIFICAÇÃO:')[1].strip()
-        elif 'TÍTULO:' in linha:
-            titulo = linha.split('TÍTULO:')[1].strip()
-        elif 'RESUMO:' in linha:
-            # Pega o resto do texto após RESUMO: (pode ter múltiplas linhas)
+        linha_limpa = linha.replace('**', '').strip()  # Remove markdown bold
+        if 'CLASSIFICAÇÃO:' in linha_limpa:
+            valor = linha_limpa.split('CLASSIFICAÇÃO:')[1].strip()
+            # Remove colchetes caso o modelo os inclua literalmente
+            valor = valor.strip('[]').strip()
+            if valor in ('SPAM', 'IRRELEVANTE', 'IMPORTANTE'):
+                classificacao = valor
+        elif 'TÍTULO:' in linha_limpa:
+            titulo = linha_limpa.split('TÍTULO:')[1].strip().strip('[]')
+        elif 'RESUMO:' in linha_limpa:
             idx = resposta.find('RESUMO:')
             if idx != -1:
                 resumo = resposta[idx+7:].strip()
             break
+
+    if classificacao is None:
+        print(f'\n   ⚠️  Parse falhou. Resposta bruta: {resposta[:200]}')
+        classificacao = 'IRRELEVANTE'
 
     return classificacao, titulo, resumo
 
@@ -161,7 +190,22 @@ def excluir_email(service, email_id):
         return False
 
 
-def analisar_emails(service, api_key, max_emails, excluir_spam, excluir_irrelevantes):
+def testar_api_gemini(creds):
+    """Faz uma chamada de teste para verificar se a API está funcionando"""
+    resposta = analisar_email_com_gemini(
+        creds,
+        assunto='Teste de conectividade',
+        remetente='teste@exemplo.com',
+        corpo='Este é um email de teste para verificar a API.'
+    )
+    if resposta.startswith('ERRO:'):
+        raise RuntimeError(f'API Gemini retornou erro: {resposta}')
+    if 'CLASSIFICAÇÃO:' not in resposta and 'CLASSIFICACAO:' not in resposta:
+        print(f'⚠️  Resposta inesperada da API (mas sem erro HTTP): {resposta[:300]}')
+    return resposta
+
+
+def analisar_emails(service, creds, max_emails, excluir_spam, excluir_irrelevantes):
     """Analisa emails com controle de quota"""
 
     # Configurações de quota
@@ -210,7 +254,7 @@ def analisar_emails(service, api_key, max_emails, excluir_spam, excluir_irreleva
         print(f'Data: {data[:60]}')
         print('🤖 Analisando...', end=' ', flush=True)
 
-        resposta = analisar_email_com_gemini(api_key, assunto, remetente, corpo)
+        resposta = analisar_email_com_gemini(creds, assunto, remetente, corpo)
         classificacao, titulo, resumo = extrair_classificacao(resposta)
 
         if classificacao == 'QUOTA_EXCEDIDA':
@@ -218,6 +262,13 @@ def analisar_emails(service, api_key, max_emails, excluir_spam, excluir_irreleva
             print(f'\n   Processados: {stats["PROCESSADOS"]}/{len(messages)}')
             print('   Execute novamente mais tarde para continuar.')
             break
+
+        if classificacao == 'ERRO_API':
+            print('   ⚠️  Pulando email por erro na API.')
+            print('-' * 80)
+            if idx < len(messages):
+                time.sleep(delay)
+            continue
 
         stats['PROCESSADOS'] += 1
 
@@ -275,13 +326,23 @@ def main():
     print('🤖 ANÁLISE INTELIGENTE DE EMAILS - Versão Otimizada')
     print('=' * 80)
 
-    # Configura Gemini
-    print('\n⚙️  Configurando Gemini AI...')
+    # Configura Gemini (Vertex AI)
+    print('\n⚙️  Configurando Gemini AI (Vertex AI)...')
     try:
-        api_key = configurar_gemini()
-        print('✅ Gemini configurado!')
+        creds = configurar_gemini()
+        print('✅ Credenciais Vertex AI carregadas!')
     except ValueError as e:
         print(e)
+        return
+
+    # Testa conexão com a API antes de processar
+    print('🔗 Testando conexão com a API Gemini...')
+    try:
+        testar_api_gemini(creds)
+        print('✅ API Gemini respondendo corretamente!')
+    except RuntimeError as e:
+        print(f'❌ {e}')
+        print('   Verifique o arquivo de credenciais e as permissões da service account no GCP.')
         return
 
     # Autentica Gmail
@@ -309,7 +370,7 @@ def main():
     print('\n' + '=' * 80)
 
     # Analisa
-    analisar_emails(service, api_key, qtd, excluir_spam, excluir_irrelevantes)
+    analisar_emails(service, creds, qtd, excluir_spam, excluir_irrelevantes)
 
     print('\n' + '=' * 80)
     print('✅ Concluído!')
