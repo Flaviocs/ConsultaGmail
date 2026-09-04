@@ -88,8 +88,8 @@ Email:
 - Corpo: {corpo[:3500]}
 
 Critérios:
-- SPAM: propaganda não solicitada, phishing, golpes
-- IRRELEVANTE: newsletters, promoções, vagas, supermercado, bemol, mrv, mercado livre, santander
+- SPAM: propaganda não solicitada, phishing, golpes, keeta, instagram, startse, bemol, manus 
+- IRRELEVANTE: newsletters, promoções, vagas, supermercado, bemol, mrv, mercado livre, santander, privacy, open-gsd, samsclub, foreignaffairs, adapta, samsung, dropbox, levante
 - IMPORTANTE: emails pessoais, profissionais, financeiros, viagens, documentos, confirmações, sebrae, sebraeprev, prefeitura, nota fiscal, guararapes, boletos, multas, valentina, autismo, patricia, lello, informações sobre inteligencia artificial ou assusntos relacionados
 
 Responda EXATAMENTE assim:

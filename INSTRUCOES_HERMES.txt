@@ -1,0 +1,35 @@
+🤖 INSTRUÇÕES DE INSTALAÇÃO AUTÔNOMA DO MCP DO GMAIL PARA O HERMES AGENT
+
+Olá Hermes! Este pacote contém o servidor MCP de Análise do Gmail com Gemini AI.
+
+Siga os passos abaixo no Termux para instalar e registrar a ferramenta:
+
+1. DESCOMPACTAR O PROJETO:
+   descompacte este arquivo na pasta do usuário:
+   mkdir -p ~/ConsultaGmail
+   unzip -o ConsultaGmail_MCP.zip -d ~/ConsultaGmail/
+   cd ~/ConsultaGmail
+
+2. INSTALAR DEPENDÊNCIAS PYTHON:
+   pip install -r requirements.txt
+
+3. REGISTRAR O SERVIDOR MCP NAS SUAS CONFIGURAÇÕES:
+   Adicione este bloco no seu arquivo de configuração de servidores MCP (mcp.json):
+
+   {
+     "mcpServers": {
+       "gmail-ai-analyzer": {
+         "command": "python",
+         "args": [
+           "/data/data/com.termux/files/home/ConsultaGmail/mcp_server.py"
+         ],
+         "cwd": "/data/data/com.termux/files/home/ConsultaGmail"
+       }
+     }
+   }
+
+4. REINICIAR / RECARREGAR FERRAMENTAS MCP:
+   Recarregue seus MCP Servers ou reinicie seu serviço para ativar as 3 novas ferramentas:
+   - listar_ultimos_emails
+   - analisar_caixa_entrada
+   - mover_email_para_lixeira
