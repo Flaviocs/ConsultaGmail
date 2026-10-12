@@ -7,6 +7,7 @@ import base64
 import time
 import requests
 import warnings
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -89,7 +90,7 @@ Email:
 
 Critérios:
 - SPAM: propaganda não solicitada, phishing, golpes, keeta, instagram, startse, bemol, manus 
-- IRRELEVANTE: newsletters, promoções, vagas, supermercado, bemol, mrv, mercado livre, santander, privacy, open-gsd, samsclub, foreignaffairs, adapta, samsung, dropbox, levante
+- IRRELEVANTE: newsletters, promoções, vagas, supermercado, bemol, mrv, mercado livre, santander, privacy, open-gsd, samsclub, foreignaffairs, adapta, samsung, dropbox, levante, Discord, Higgsfield, Livelo, visa.com, Jusbrasil, suno, sofisa, n8n, Morning Call, appbarber, Radar IA, netflix,consensus, substack, rappi, iaexpert,santander
 - IMPORTANTE: emails pessoais, profissionais, financeiros, viagens, documentos, confirmações, sebrae, sebraeprev, prefeitura, nota fiscal, guararapes, boletos, multas, valentina, autismo, patricia, lello, informações sobre inteligencia artificial ou assusntos relacionados
 
 Responda EXATAMENTE assim:
@@ -205,7 +206,10 @@ def testar_api_gemini(creds):
     return resposta
 
 
-def analisar_emails(service, creds, max_emails, excluir_spam, excluir_irrelevantes):
+def analisar_emails(
+    service, creds, max_emails, excluir_spam, excluir_irrelevantes,
+    excluir_mais_antigos_que_dias=0,
+):
     """Analisa emails com controle de quota"""
 
     # Configurações de quota
@@ -234,8 +238,20 @@ def analisar_emails(service, creds, max_emails, excluir_spam, excluir_irrelevant
 
     stats = {
         'SPAM': 0, 'IRRELEVANTE': 0, 'IMPORTANTE': 0,
-        'SPAM_DEL': 0, 'IRREL_DEL': 0, 'PROCESSADOS': 0
+        'SPAM_DEL': 0, 'IRREL_DEL': 0, 'IDADE_DEL': 0, 'PROCESSADOS': 0
     }
+
+    # A data interna do Gmail é usada para evitar diferenças de formato ou fuso
+    # horário existentes no cabeçalho "Date".
+    data_limite = None
+    if excluir_mais_antigos_que_dias > 0:
+        data_limite = datetime.now(timezone.utc) - timedelta(
+            days=excluir_mais_antigos_que_dias
+        )
+        print(
+            f'\n🗑️  Emails com mais de {excluir_mais_antigos_que_dias} dias '
+            'também serão excluídos.\n'
+        )
 
     for idx, message in enumerate(messages, 1):
         msg = service.users().messages().get(
@@ -247,6 +263,10 @@ def analisar_emails(service, creds, max_emails, excluir_spam, excluir_irrelevant
         remetente = next((h['value'] for h in headers if h['name'] == 'From'), 'Desconhecido')
         data = next((h['value'] for h in headers if h['name'] == 'Date'), 'Data desconhecida')
         corpo = extrair_corpo_email(msg['payload'])
+        data_email = datetime.fromtimestamp(
+            int(msg['internalDate']) / 1000, tz=timezone.utc
+        )
+        excluir_por_idade = data_limite is not None and data_email < data_limite
 
         print(f'\n📨 {idx}/{len(messages)}')
         print(f'De: {remetente[:60]}')
@@ -276,12 +296,22 @@ def analisar_emails(service, creds, max_emails, excluir_spam, excluir_irrelevant
         if titulo:
             print(f'   📌 {titulo}')
 
+        # A idade é um critério independente e tem prioridade para impedir que
+        # a mesma mensagem seja enviada à lixeira mais de uma vez.
+        if excluir_por_idade:
+            if excluir_email(service, message['id']):
+                print(
+                    f'   🗑️  Excluído por ter mais de '
+                    f'{excluir_mais_antigos_que_dias} dias!'
+                )
+                stats['IDADE_DEL'] += 1
+
         if classificacao == 'SPAM':
             print('   🚨 SPAM')
             if resumo:
                 print(f'   💬 {resumo}')
             stats['SPAM'] += 1
-            if excluir_spam and excluir_email(service, message['id']):
+            if not excluir_por_idade and excluir_spam and excluir_email(service, message['id']):
                 print('   🗑️  Excluído!')
                 stats['SPAM_DEL'] += 1
 
@@ -290,7 +320,7 @@ def analisar_emails(service, creds, max_emails, excluir_spam, excluir_irrelevant
             if resumo:
                 print(f'   💬 {resumo}')
             stats['IRRELEVANTE'] += 1
-            if excluir_irrelevantes and excluir_email(service, message['id']):
+            if not excluir_por_idade and excluir_irrelevantes and excluir_email(service, message['id']):
                 print('   🗑️  Excluído!')
                 stats['IRREL_DEL'] += 1
 
@@ -316,7 +346,12 @@ def analisar_emails(service, creds, max_emails, excluir_spam, excluir_irrelevant
     print(f'   ⭐ Importantes: {stats["IMPORTANTE"]}')
     print(f'   📭 Irrelevantes: {stats["IRRELEVANTE"]} (excluídos: {stats["IRREL_DEL"]})')
     print(f'   🚨 Spam: {stats["SPAM"]} (excluídos: {stats["SPAM_DEL"]})')
-    total_del = stats['SPAM_DEL'] + stats['IRREL_DEL']
+    if excluir_mais_antigos_que_dias > 0:
+        print(
+            f'   🕒 Por idade (mais de {excluir_mais_antigos_que_dias} dias): '
+            f'{stats["IDADE_DEL"]} excluídos'
+        )
+    total_del = stats['SPAM_DEL'] + stats['IRREL_DEL'] + stats['IDADE_DEL']
     if total_del > 0:
         print(f'\n   🗑️  TOTAL EXCLUÍDOS: {total_del}')
 
@@ -363,6 +398,17 @@ def main():
     excluir_irrelevantes = input('❓ Excluir IRRELEVANTES automaticamente? (s/n): ').lower() == 's'
 
     try:
+        excluir_mais_antigos_que_dias = int(
+            input(
+                '❓ Excluir emails com mais de quantos dias? '
+                '(vazio ou 0 para desconsiderar): '
+            ) or 0
+        )
+        excluir_mais_antigos_que_dias = max(0, excluir_mais_antigos_que_dias)
+    except ValueError:
+        excluir_mais_antigos_que_dias = 0
+
+    try:
         qtd = int(input(f'\n❓ Quantos emails analisar? (max {max_execucao}): ') or max_execucao)
     except:
         qtd = max_execucao
@@ -370,7 +416,10 @@ def main():
     print('\n' + '=' * 80)
 
     # Analisa
-    analisar_emails(service, creds, qtd, excluir_spam, excluir_irrelevantes)
+    analisar_emails(
+        service, creds, qtd, excluir_spam, excluir_irrelevantes,
+        excluir_mais_antigos_que_dias,
+    )
 
     print('\n' + '=' * 80)
     print('✅ Concluído!')
