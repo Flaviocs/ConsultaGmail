@@ -9,6 +9,9 @@ Script Python para analisar emails do Gmail usando inteligência artificial do G
 - 📝 **Resumos inteligentes**: Gera resumos detalhados (4-6 linhas) para emails importantes
 - 📅 **Informações completas**: Exibe remetente, assunto e data de recebimento
 - 🗑️ **Exclusão automática**: Remove spam e emails irrelevantes opcionalmente
+- 🕒 **Exclusão por idade**: Remove emails com mais de X dias utilizando a data interna do Gmail
+- 🛡️ **Resiliência na IA**: Tratamento robusto com fallback caso ocorra instabilidade ou erro na IA
+- 🔌 **Integração MCP (Model Context Protocol)**: Servidor pronto para agentes como Hermes Agent e Claude Desktop
 - ⚙️ **Processamento em lote**: Analisa até 500 emails por execução
 - 📊 **Estatísticas detalhadas**: Mostra resumo completo da análise com contadores
 - ⏱️ **Controle de quota**: Delay configurável entre análises
@@ -89,11 +92,22 @@ python analise_emails_gemini_otimizado.py
 2. ✅ Configura Gemini AI
 3. ❓ Pergunta se deseja excluir SPAM automaticamente
 4. ❓ Pergunta se deseja excluir IRRELEVANTES automaticamente
-5. ❓ Pergunta quantos emails analisar (máx: 500 por execução)
-6. 🤖 Analisa cada email com Gemini 2.5 Flash
-7. 📊 Mostra: remetente, assunto, data, título resumido, classificação e resumo
-8. 🗑️ Exclui conforme configurado
-9. 📈 Apresenta estatísticas finais
+5. ❓ Pergunta se deseja excluir emails com mais de quantos dias (0 para desconsiderar)
+6. ❓ Pergunta quantos emails analisar (máx: 500 por execução)
+7. 🤖 Analisa cada email com Gemini 2.5 Flash
+8. 📊 Mostra: remetente, assunto, data, título resumido, classificação e resumo
+9. 🗑️ Exclui conforme configurado (spam, irrelevantes e/ou idade)
+10. 📈 Apresenta estatísticas finais detalhadas
+
+### Servidor MCP para Agentes (Hermes / Claude / Antigravity)
+
+O projeto inclui um servidor MCP padrão (`mcp_server.py`) que disponibiliza ferramentas para agentes autônomos consultarem a caixa de entrada, realizarem análise com IA e moverem e-mails para a lixeira:
+
+```bash
+python mcp_server.py
+```
+
+Consulte [HERMES_MCP_CONFIG.md](HERMES_MCP_CONFIG.md) para detalhes de configuração e integração com o Hermes Agent via Telegram.
 
 ### Script de Listagem Simples (Opcional)
 
@@ -225,11 +239,10 @@ Emails que devem ser descartados:
 
 Emails que não são prioritários:
 
-- Newsletters genéricos
-- Notificações de redes sociais
-- Promoções de lojas (Bemol, MRV, Mercado Livre, Santander)
-- Alertas de vagas de emprego
-- Notificações de supermercados
+- Newsletters genéricos, feeds e assinaturas (Substack, Morning Call, Radar IA, etc.)
+- Notificações de redes sociais e comunidades (Discord, etc.)
+- Promoções e ofertas de lojas/serviços (Bemol, MRV, Mercado Livre, Santander, Livelo, Visa, Rappi, Netflix, Sams Club, Adapta, Samsung, Dropbox, Levante, Suno, Sofisa, n8n, AppBarber, etc.)
+- Notificações de plataformas de vagas, judiciais ou utilitárias secundárias (Jusbrasil, etc.)
 
 **Resumo gerado**: 2-3 linhas explicando brevemente o conteúdo
 
@@ -237,13 +250,14 @@ Emails que não são prioritários:
 
 Emails que merecem sua atenção:
 
-- Emails pessoais e profissionais
-- Assuntos financeiros (boletos, multas)
+- Emails pessoais e profissionais diretos
+- Assuntos financeiros (boletos, multas, extratos relevantes)
 - Notas fiscais (Guararapes, etc.)
-- Confirmações de viagens
-- Documentos fiscais
+- Confirmações de viagens e passagens
+- Documentos fiscais e contratuais
 - Comunicados importantes (Sebrae, SebraePrev, Prefeitura)
-- Assuntos específicos (Valentina, Autismo, Patricia, Lello)
+- Assuntos específicos e familiares prioritários (Valentina, Autismo, Patricia, Lello)
+- Conteúdos e atualizações essenciais sobre Inteligência Artificial ou temas correlatos
 
 **Resumo gerado**: 4-6 linhas detalhadas com pontos-chave, informações relevantes e ações necessárias
 
@@ -329,8 +343,12 @@ token.json        # Token de acesso gerado
 
 ```
 ConsultaGmail/
-├── analise_emails_gemini_otimizado.py  # Script principal ⭐
-├── consulta_gmail.py                   # Listagem simples (opcional)
+├── analise_emails_gemini_otimizado.py  # Script principal de análise inteligente ⭐
+├── consulta_gmail.py                   # Listagem simples sem IA (opcional)
+├── gmail_core.py                       # Módulo compartilhado de integração Gmail / IA
+├── mcp_server.py                       # Servidor MCP para agentes (Hermes, Claude, etc.)
+├── HERMES_MCP_CONFIG.md                # Guia de configuração e comandos do Hermes MCP
+├── INSTRUCOES_HERMES.txt               # Instruções complementares para o Hermes
 ├── requirements.txt                    # Dependências Python
 ├── .env.example                        # Exemplo de configuração
 ├── credentials.json                    # OAuth Gmail (você cria) ⚠️
@@ -353,12 +371,14 @@ google-genai==1.0.0                # Gemini SDK
 python-dotenv==1.0.1               # Variáveis de ambiente
 requests==2.32.3                   # Requisições HTTP
 urllib3==2.2.1                     # Cliente HTTP
+mcp>=1.2.0,<2.0.0                  # SDK do Model Context Protocol
 ```
 
 ## 📚 Documentação e Recursos
 
 - [Gmail API](https://developers.google.com/gmail/api) - Documentação oficial da API do Gmail
 - [Gemini API](https://ai.google.dev/docs) - Documentação oficial do Gemini
+- [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) - Especificação do protocolo MCP
 - [Google AI Studio](https://aistudio.google.com/) - Console para gerenciar API Keys
 - [Google Cloud Console](https://console.cloud.google.com/) - Gerenciamento de projetos e APIs
 
@@ -377,6 +397,6 @@ Este projeto é de código aberto e está disponível para uso pessoal e educaci
 
 ---
 
-**Desenvolvido com ❤️ usando Claude Code**
+**Desenvolvido com ❤️**
 
-*Última atualização: Maio 2026*
+*Última atualização: Outubro 2026*
