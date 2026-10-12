@@ -1,6 +1,8 @@
 # Credenciais e tokens
 credentials.json
 token.json
+token.json*
+agent-space-*.json
 .env
 
 # Python
